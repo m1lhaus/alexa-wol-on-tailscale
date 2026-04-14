@@ -1,0 +1,28 @@
+{
+  "name": "wol-server dev",
+  "build": {
+    "context": "..",
+    "dockerfile": "Dockerfile"
+  },
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+
+  // Environment – mirrors production values; override in .env or here
+  "remoteEnv": {
+    "WOL_TOKEN": "${localEnv:WOL_TOKEN}",
+    "WOL_MAC": "${localEnv:WOL_MAC}",
+    "WOL_BROADCAST": "${localEnv:WOL_BROADCAST}"
+  },
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.debugpy"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/local/bin/python"
+      }
+    }
+  }
+}

@@ -1,0 +1,246 @@
+"""Tests for the Wake-on-LAN HTTP server (server/app.py).
+
+Run with:
+    cd server && python -m pytest test_app.py -v
+    # or
+    cd server && python -m unittest test_app -v
+"""
+
+import http.client
+import json
+import os
+import threading
+import unittest
+from http.server import HTTPServer
+from unittest.mock import patch
+
+# Force env vars before importing app so module-level constants initialise correctly.
+# Direct assignment (not setdefault) is required because the shell may already have
+# these set to empty strings via the VS Code launch configuration.
+_TOKEN = "test_token_abc123"
+_MAC = "AA:BB:CC:DD:EE:FF"
+_BROADCAST = "192.168.1.255"
+
+os.environ["WOL_TOKEN"] = _TOKEN
+os.environ["WOL_MAC"] = _MAC
+os.environ["WOL_BROADCAST"] = _BROADCAST
+
+import app  # noqa: E402  (import after env setup is intentional)
+
+# Also patch module-level constants in case app was already imported with stale values.
+app.TOKEN = _TOKEN.encode()
+app.MAC_ADDRESS = _MAC
+app.BROADCAST_IP = _BROADCAST
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — send_magic_packet
+# ---------------------------------------------------------------------------
+
+
+class TestSendMagicPacket(unittest.TestCase):
+    """Verify magic-packet construction without touching the real network."""
+
+    def _call(self, mac: str, broadcast: str = "255.255.255.255"):
+        """Call send_magic_packet and return the (payload, addr) passed to sendto."""
+        with patch("socket.socket") as mock_socket_cls:
+            mock_sock = mock_socket_cls.return_value.__enter__.return_value
+            app.send_magic_packet(mac, broadcast)
+        return mock_sock
+
+    def test_payload_structure(self):
+        """Magic packet = 6×0xFF + target MAC repeated 16 times."""
+        mac = "AA:BB:CC:DD:EE:FF"
+        mac_bytes = bytes.fromhex("AABBCCDDEEFF")
+        expected = b"\xff" * 6 + mac_bytes * 16
+
+        mock_sock = self._call(mac, "192.168.1.255")
+
+        mock_sock.setsockopt.assert_called_once()
+        payload, addr = mock_sock.sendto.call_args[0]
+        self.assertEqual(payload, expected)
+        self.assertEqual(addr, ("192.168.1.255", app.WOL_PORT))
+
+    def test_colon_and_hyphen_mac_produce_same_packet(self):
+        """Both 'AA:BB:…' and 'AA-BB-…' formats must yield identical packets."""
+        with patch("socket.socket") as mock_cls:
+            sock = mock_cls.return_value.__enter__.return_value
+
+            app.send_magic_packet("AA:BB:CC:DD:EE:FF", "255.255.255.255")
+            colon_payload = sock.sendto.call_args[0][0]
+            sock.reset_mock()
+
+            app.send_magic_packet("AA-BB-CC-DD-EE-FF", "255.255.255.255")
+            hyphen_payload = sock.sendto.call_args[0][0]
+
+        self.assertEqual(colon_payload, hyphen_payload)
+
+
+# ---------------------------------------------------------------------------
+# Integration tests — HTTP server
+# ---------------------------------------------------------------------------
+
+
+class TestWoLHTTPServer(unittest.TestCase):
+    """Spin up a real HTTPServer on an ephemeral port and send live HTTP requests."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.server = HTTPServer(("127.0.0.1", 0), app.WoLHandler)
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _post(self, body: bytes) -> "http.client.HTTPResponse | None":
+        """POST *body*; return the response, or None when silently dropped."""
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        try:
+            conn.request(
+                "POST",
+                "/wol",
+                body=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "Content-Length": str(len(body)),
+                },
+            )
+            return conn.getresponse()
+        except (ConnectionResetError, http.client.RemoteDisconnected, BrokenPipeError, OSError):
+            return None
+        finally:
+            conn.close()
+
+    def _request(self, method: str) -> "http.client.HTTPResponse | None":
+        """Send *method* with an empty body; return response or None if dropped."""
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        try:
+            conn.request(method, "/", headers={"Content-Length": "0"})
+            return conn.getresponse()
+        except (ConnectionResetError, http.client.RemoteDisconnected, BrokenPipeError, OSError):
+            return None
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # Happy path
+    # ------------------------------------------------------------------
+
+    def test_valid_token_returns_200(self):
+        """Correct token → 200 OK and exactly one magic-packet call."""
+        payload = json.dumps({"token": _TOKEN}).encode()
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(payload)
+
+        self.assertIsNotNone(resp, "connection must not be dropped for a valid request")
+        self.assertEqual(resp.status, 200)
+        mock_send.assert_called_once_with(_MAC, _BROADCAST)
+
+    # ------------------------------------------------------------------
+    # Auth / token failures
+    # ------------------------------------------------------------------
+
+    def test_wrong_token_is_dropped(self):
+        payload = json.dumps({"token": "definitely_wrong_token"}).encode()
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(payload)
+
+        self.assertIsNone(resp, "wrong token must silently drop the connection")
+        mock_send.assert_not_called()
+
+    def test_empty_token_is_dropped(self):
+        payload = json.dumps({"token": ""}).encode()
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(payload)
+
+        self.assertIsNone(resp)
+        mock_send.assert_not_called()
+
+    def test_missing_token_field_is_dropped(self):
+        """JSON body without a 'token' key must be rejected."""
+        payload = json.dumps({"action": "wake"}).encode()
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(payload)
+
+        self.assertIsNone(resp)
+        mock_send.assert_not_called()
+
+    def test_token_with_extra_whitespace_is_dropped(self):
+        """Token comparison is exact — surrounding whitespace must not match."""
+        payload = json.dumps({"token": f" {_TOKEN} "}).encode()
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(payload)
+
+        self.assertIsNone(resp)
+        mock_send.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # Malformed / oversized body
+    # ------------------------------------------------------------------
+
+    def test_invalid_json_is_dropped(self):
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(b"this is not json")
+
+        self.assertIsNone(resp)
+        mock_send.assert_not_called()
+
+    def test_empty_body_is_dropped(self):
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(b"")
+
+        self.assertIsNone(resp)
+        mock_send.assert_not_called()
+
+    def test_oversized_body_is_dropped(self):
+        """Content-Length > 4096 must be rejected before the body is read."""
+        body = b"x" * 4097
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(body)
+
+        self.assertIsNone(resp)
+        mock_send.assert_not_called()
+
+    def test_body_at_size_limit_is_accepted(self):
+        """Content-Length == 4096 is within the allowed limit and must succeed."""
+        base = json.dumps({"token": _TOKEN, "pad": ""}).encode()
+        # Fill "pad" value so the total reaches exactly 4096 bytes
+        pad_len = 4096 - len(base) + len('""') - 2  # replace empty "" with pad_len chars
+        if pad_len < 0:
+            self.skipTest("Token too long to construct a 4096-byte payload")
+        payload = json.dumps({"token": _TOKEN, "pad": "x" * pad_len}).encode()
+        self.assertLessEqual(len(payload), 4096, "payload construction error")
+
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(payload)
+
+        self.assertIsNotNone(resp)
+        self.assertEqual(resp.status, 200)
+        mock_send.assert_called_once()
+
+    # ------------------------------------------------------------------
+    # Rejected HTTP methods
+    # ------------------------------------------------------------------
+
+    def test_get_is_dropped(self):
+        self.assertIsNone(self._request("GET"))
+
+    def test_put_is_dropped(self):
+        self.assertIsNone(self._request("PUT"))
+
+    def test_delete_is_dropped(self):
+        self.assertIsNone(self._request("DELETE"))
+
+    def test_head_is_dropped(self):
+        self.assertIsNone(self._request("HEAD"))
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)

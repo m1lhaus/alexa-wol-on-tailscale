@@ -1,0 +1,31 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run app.py",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${workspaceFolder}/server/app.py",
+      "console": "integratedTerminal",
+      "env": {
+        "WOL_TOKEN": "${env:WOL_TOKEN}",
+        "WOL_MAC": "${env:WOL_MAC}",
+        "WOL_BROADCAST": "${env:WOL_BROADCAST}"
+      }
+    },
+    {
+      "name": "Run tests (test_app.py)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "unittest",
+      "args": ["test_app", "-v"],
+      "cwd": "${workspaceFolder}/server",
+      "console": "integratedTerminal",
+      "env": {
+        "WOL_TOKEN": "",
+        "WOL_MAC": "",
+        "WOL_BROADCAST": ""
+      }
+    }
+  ]
+}
