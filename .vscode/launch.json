@@ -7,25 +7,20 @@
       "request": "launch",
       "program": "${workspaceFolder}/server/app.py",
       "console": "integratedTerminal",
-      "env": {
-        "WOL_TOKEN": "${env:WOL_TOKEN}",
-        "WOL_MAC": "${env:WOL_MAC}",
-        "WOL_BROADCAST": "${env:WOL_BROADCAST}"
-      }
+      "envFile": "${workspaceFolder}/.env"
     },
     {
       "name": "Run tests (test_app.py)",
       "type": "debugpy",
       "request": "launch",
       "module": "unittest",
-      "args": ["test_app", "-v"],
+      "args": [
+        "test_app",
+        "-v"
+      ],
       "cwd": "${workspaceFolder}/server",
       "console": "integratedTerminal",
-      "env": {
-        "WOL_TOKEN": "",
-        "WOL_MAC": "",
-        "WOL_BROADCAST": ""
-      }
+      "envFile": "${workspaceFolder}/.env"
     }
   ]
 }
