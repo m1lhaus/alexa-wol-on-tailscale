@@ -6,14 +6,12 @@
   },
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
-
   // Environment – mirrors production values; override in .env or here
   "remoteEnv": {
     "WOL_TOKEN": "${localEnv:WOL_TOKEN}",
     "WOL_MAC": "${localEnv:WOL_MAC}",
     "WOL_BROADCAST": "${localEnv:WOL_BROADCAST}"
   },
-
   "customizations": {
     "vscode": {
       "extensions": [
@@ -22,7 +20,18 @@
         "ms-python.autopep8"
       ],
       "settings": {
-        "python.defaultInterpreterPath": "/usr/local/bin/python"
+        "python.defaultInterpreterPath": "/usr/local/bin/python",
+        "git.autofetch": false,
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "ms-python.autopep8",
+          "editor.rulers": [
+            120
+          ]
+        },
+        "autopep8.args": [
+          "--max-line-length=120"
+        ]
       }
     }
   }
