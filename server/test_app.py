@@ -9,6 +9,7 @@ Run with:
 import http.client
 import json
 import os
+import socket
 import threading
 import unittest
 from http.server import HTTPServer
@@ -240,6 +241,49 @@ class TestWoLHTTPServer(unittest.TestCase):
 
     def test_head_is_dropped(self):
         self.assertIsNone(self._request("HEAD"))
+
+    # ------------------------------------------------------------------
+    # Raw-socket edge cases (cover handle_one_request branches)
+    # ------------------------------------------------------------------
+
+    def _raw_recv_all(self, s: socket.socket) -> bytes:
+        """Drain *s* until EOF (or timeout), return all received bytes."""
+        s.settimeout(1)
+        buf = b""
+        try:
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                buf += chunk
+        except OSError:
+            pass
+        return buf
+
+    def test_empty_requestline_closes_connection(self):
+        """EOF before any data → raw_requestline == b'' → connection dropped."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect(("127.0.0.1", self.port))
+            s.shutdown(socket.SHUT_WR)  # signal EOF immediately
+            self.assertEqual(self._raw_recv_all(s), b"")
+
+    def test_oversized_requestline_closes_connection(self):
+        """Request line > 65536 bytes → len check triggers → connection dropped."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect(("127.0.0.1", self.port))
+            # readline(65537) returns 65537 bytes when no newline is found in that window
+            s.sendall(b"X" * 65537)
+            s.shutdown(socket.SHUT_WR)
+            self.assertEqual(self._raw_recv_all(s), b"")
+
+    def test_malformed_requestline_drops_connection(self):
+        """Bare CRLF → parse_request() gets words=[] → returns False → dropped."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect(("127.0.0.1", self.port))
+            # empty request line; parse_request returns False
+            s.sendall(b"\r\n")
+            s.shutdown(socket.SHUT_WR)
+            self.assertEqual(self._raw_recv_all(s), b"")
 
 
 if __name__ == "__main__":
