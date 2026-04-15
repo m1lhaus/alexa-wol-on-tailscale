@@ -22,6 +22,14 @@ def send_magic_packet(mac: str, broadcast: str) -> None:
         s.sendto(magic, (broadcast, WOL_PORT))
 
 
+def get_local_ip() -> str:
+    """Get the local IP address of the machine."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as _s:
+        _s.connect(("8.8.8.8", 80))
+        local_ip = _s.getsockname()[0]
+    return local_ip
+
+
 class WoLHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         try:
@@ -76,6 +84,7 @@ class WoLHandler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    log.info("WoL server starting on port 8080 (MAC=%s, broadcast=%s)", MAC_ADDRESS, BROADCAST_IP)
+    log.info(f"WoL server running on {get_local_ip()} starting listening on 0.0.0.0:8080 "
+             f"(WoL MAC={MAC_ADDRESS}, broadcast={BROADCAST_IP})")
     server = HTTPServer(("0.0.0.0", 8080), WoLHandler)
     server.serve_forever()
