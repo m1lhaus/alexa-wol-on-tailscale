@@ -41,6 +41,7 @@ services:
       - WOL_TOKEN=${WOL_TOKEN}
       - WOL_MAC=${WOL_MAC}
       - WOL_BROADCAST=${WOL_BROADCAST}
+      - WOL_DEBUG=${WOL_DEBUG}
     restart: on-failure
 
 networks:
