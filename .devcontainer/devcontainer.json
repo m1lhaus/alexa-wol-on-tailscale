@@ -6,6 +6,7 @@
   },
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
+  "remoteUser": "devuser",
   // Environment – mirrors production values; override in .env or here
   "remoteEnv": {
     "WOL_TOKEN": "${localEnv:WOL_TOKEN}",
