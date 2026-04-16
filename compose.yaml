@@ -31,7 +31,12 @@ services:
     networks:
       lan:
         ipv4_address: ${CONTAINER_IP}
-    restart: unless-stopped
+    restart: unless-stopped 
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
 
   wol:
     build: ./server
@@ -41,8 +46,15 @@ services:
       - WOL_TOKEN=${WOL_TOKEN}
       - WOL_MAC=${WOL_MAC}
       - WOL_BROADCAST=${WOL_BROADCAST}
+      - WOL_PORT=${WOL_PORT}
       - WOL_DEBUG=${WOL_DEBUG}
+      - WOL_CONN_TIMEOUT=${WOL_CONN_TIMEOUT}
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "3"
 
 networks:
   lan:
