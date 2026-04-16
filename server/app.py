@@ -13,7 +13,7 @@ log = logging.getLogger(__name__)
 # Secret token for authenticating incoming requests
 TOKEN: bytes = os.environ["WOL_TOKEN"].encode()
 
-# Target machine's MAC address)
+# Target machine's MAC address
 MAC_ADDRESS: str = os.environ["WOL_MAC"]
 
 # Broadcast address on your LAN (usually <subnet>.255)
