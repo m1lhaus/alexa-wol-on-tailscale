@@ -5,7 +5,7 @@ import os
 import socket
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-_log_level = logging.DEBUG if os.environ.get("WOL_DEBUG") else logging.INFO
+_log_level = logging.DEBUG if os.environ.get("WOL_DEBUG") == "1" else logging.INFO
 logging.basicConfig(level=_log_level, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
 
