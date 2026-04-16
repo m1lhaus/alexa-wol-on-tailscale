@@ -7,12 +7,6 @@
   "workspaceFolder": "/workspace",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind",
   "remoteUser": "devuser",
-  // Environment – mirrors production values; override in .env or here
-  "remoteEnv": {
-    "WOL_TOKEN": "${localEnv:WOL_TOKEN}",
-    "WOL_MAC": "${localEnv:WOL_MAC}",
-    "WOL_BROADCAST": "${localEnv:WOL_BROADCAST}"
-  },
   "customizations": {
     "vscode": {
       "extensions": [
@@ -30,6 +24,7 @@
             120
           ]
         },
+        "python.terminal.useEnvFile": true,
         "autopep8.args": [
           "--max-line-length=120"
         ],
