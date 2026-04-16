@@ -2,12 +2,12 @@
 Test script for Wake-on-LAN functionality. This script sends a magic packet to the specified MAC address and 
 broadcast IP to wake up a device on the network.
 
-How to run:
-export $(grep -v '^#' .env | xargs) && python3 server/test_wol.py
+Run with:
+    export $(grep -v '^#' .env | xargs) && python3 server/test_wol.py
 
 Important: 
-You need to run this script from a machine that has L2 network presence! Not from a dev container (behind a NAT), 
-but from the host instead! 
+    You need to run this script from a machine that has L2 network presence! Not from a dev container (behind a NAT), 
+    but from the host instead! 
 """
 
 import os
