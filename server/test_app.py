@@ -1,9 +1,7 @@
 """Tests for the Wake-on-LAN HTTP server (server/app.py).
 
 Run with:
-    cd server && python -m pytest test_app.py -v
-    # or
-    cd server && python -m unittest test_app -v
+    export $(grep -v '^#' .env | xargs) && python -m unittest test_app -v
 """
 
 import http.client
@@ -144,6 +142,25 @@ class TestWoLHTTPServer(unittest.TestCase):
         self.assertEqual(resp.status, 200)
         mock_send.assert_called_once_with(_MAC, _BROADCAST)
 
+    def test_send_magic_packet_failure_drops_connection(self):
+        """If send_magic_packet raises, the server must drop rather than return 200."""
+        payload = json.dumps({"token": _TOKEN}).encode()
+        with patch.object(app, "send_magic_packet", side_effect=OSError("network error")):
+            resp = self._post(payload)
+        self.assertIsNone(resp, "socket failure must not produce a 200 response")
+
+    def test_connection_timeout_is_set(self):
+        """setup() must apply _CONNECTION_TIMEOUT to the socket."""
+        from unittest.mock import MagicMock
+        handler = app.WoLHandler.__new__(app.WoLHandler)
+        handler.connection = MagicMock()
+        handler.request = handler.connection
+        handler.client_address = ("127.0.0.1", 9999)
+        handler.server = self.server
+        with patch("socketserver.StreamRequestHandler.setup"):
+            app.WoLHandler.setup(handler)
+        handler.connection.settimeout.assert_called_once_with(app._CONNECTION_TIMEOUT)
+
     # ------------------------------------------------------------------
     # Auth / token failures
     # ------------------------------------------------------------------
@@ -243,6 +260,45 @@ class TestWoLHTTPServer(unittest.TestCase):
         self.assertIsNone(self._request("HEAD"))
 
     # ------------------------------------------------------------------
+    # Content-Length edge cases
+    # ------------------------------------------------------------------
+
+    def test_negative_content_length_is_dropped(self):
+        """Negative Content-Length must be rejected without reading the body."""
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.connect(("127.0.0.1", self.port))
+            s.sendall(
+                b"POST /wol HTTP/1.1\r\n"
+                b"Host: 127.0.0.1\r\n"
+                b"Content-Type: application/json\r\n"
+                b"Content-Length: -1\r\n"
+                b"\r\n"
+            )
+            s.shutdown(socket.SHUT_WR)
+            self.assertEqual(self._raw_recv_all(s), b"")
+
+    def test_non_string_token_is_dropped(self):
+        """Non-string token values (e.g. integers) must not match."""
+        payload = json.dumps({"token": 12345}).encode()
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(payload)
+        self.assertIsNone(resp)
+        mock_send.assert_not_called()
+
+    # ------------------------------------------------------------------
+    # Response headers
+    # ------------------------------------------------------------------
+
+    def test_successful_response_sends_connection_close(self):
+        """200 OK must include Connection: close to prevent connection reuse."""
+        payload = json.dumps({"token": _TOKEN}).encode()
+        with patch.object(app, "send_magic_packet"):
+            resp = self._post(payload)
+        self.assertIsNotNone(resp)
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.getheader("Connection"), "close")
+
+    # ------------------------------------------------------------------
     # Raw-socket edge cases (cover handle_one_request branches)
     # ------------------------------------------------------------------
 
@@ -284,6 +340,65 @@ class TestWoLHTTPServer(unittest.TestCase):
             s.sendall(b"\r\n")
             s.shutdown(socket.SHUT_WR)
             self.assertEqual(self._raw_recv_all(s), b"")
+
+
+# ---------------------------------------------------------------------------
+# Unit tests — _validate_config
+# ---------------------------------------------------------------------------
+
+
+class TestValidateConfig(unittest.TestCase):
+    """Verify that startup configuration validation catches bad inputs."""
+
+    def test_empty_token_raises(self):
+        with patch.object(app, "TOKEN", b""):
+            with self.assertRaises(ValueError):
+                app._validate_config()
+
+    def test_token_too_short_raises(self):
+        with patch.object(app, "TOKEN", b"tooshort"):
+            with self.assertRaises(ValueError):
+                app._validate_config()
+
+    def test_token_at_minimum_length_is_accepted(self):
+        with patch.object(app, "TOKEN", b"a" * app._MIN_TOKEN_LEN):
+            app._validate_config()  # must not raise
+
+    def test_invalid_mac_raises(self):
+        with patch.object(app, "MAC_ADDRESS", "not-a-mac"):
+            with self.assertRaises(ValueError):
+                app._validate_config()
+
+    def test_valid_colon_mac_is_accepted(self):
+        with patch.object(app, "MAC_ADDRESS", "AA:BB:CC:DD:EE:FF"):
+            app._validate_config()
+
+    def test_valid_hyphen_mac_is_accepted(self):
+        with patch.object(app, "MAC_ADDRESS", "AA-BB-CC-DD-EE-FF"):
+            app._validate_config()
+
+    def test_valid_bare_mac_is_accepted(self):
+        with patch.object(app, "MAC_ADDRESS", "AABBCCDDEEFF"):
+            app._validate_config()
+
+    def test_invalid_broadcast_raises(self):
+        with patch.object(app, "BROADCAST_IP", "not.an.ip"):
+            with self.assertRaises(ValueError):
+                app._validate_config()
+
+    def test_valid_config_does_not_raise(self):
+        """The test-suite values themselves must pass validation."""
+        app._validate_config()
+
+    def test_zero_connection_timeout_raises(self):
+        with patch.object(app, "_CONNECTION_TIMEOUT", 0.0):
+            with self.assertRaises(ValueError):
+                app._validate_config()
+
+    def test_negative_connection_timeout_raises(self):
+        with patch.object(app, "_CONNECTION_TIMEOUT", -1.0):
+            with self.assertRaises(ValueError):
+                app._validate_config()
 
 
 if __name__ == "__main__":
