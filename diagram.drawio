@@ -1,0 +1,52 @@
+<mxfile host="65bd71144e">
+    <diagram name="WoL Architecture" id="0">
+        <mxGraphModel dx="1273" dy="872" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="850" pageHeight="1100" math="0" shadow="0" adaptiveColors="auto">
+            <root>
+                <mxCell id="0"/>
+                <mxCell id="1" parent="0"/>
+                <mxCell id="title" value="Alexa Wake-on-LAN via Tailscale Funnel" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=16;fontStyle=1;" parent="1" vertex="1">
+                    <mxGeometry x="20" y="10" width="1180" height="40" as="geometry"/>
+                </mxCell>
+                <mxCell id="z_internet" value="Internet" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;opacity=50;verticalAlign=top;fontSize=11;fontStyle=1;pointerEvents=0;" parent="1" vertex="1">
+                    <mxGeometry x="290" y="55" width="640" height="170" as="geometry"/>
+                </mxCell>
+                <mxCell id="z_lan" value="Home LAN" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;opacity=50;verticalAlign=top;fontSize=11;fontStyle=1;pointerEvents=0;" parent="1" vertex="1">
+                    <mxGeometry x="20" y="260" width="1180" height="190" as="geometry"/>
+                </mxCell>
+                <mxCell id="n_user" value="User" style="ellipse;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;fontColor=#333333;" parent="1" vertex="1">
+                    <mxGeometry x="60" y="320" width="80" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="n_alexa" value="Amazon Alexa&#xa;(Echo device)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#1ba1e2;strokeColor=#006EAF;fontColor=#ffffff;" parent="1" vertex="1">
+                    <mxGeometry x="215" y="320" width="130" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="n_vm" value="Voice Monkey&#xa;(cloud service)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" parent="1" vertex="1">
+                    <mxGeometry x="345" y="100" width="140" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="n_ts" value="Tailscale Funnel&#xa;(relay)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f8cecc;strokeColor=#b85450;" parent="1" vertex="1">
+                    <mxGeometry x="600" y="100" width="160" height="60" as="geometry"/>
+                </mxCell>
+                <mxCell id="n_wol" value="WoL Server&#xa;(Docker / RPi)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" parent="1" vertex="1">
+                    <mxGeometry x="820" y="320" width="145" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="n_pc" value="Target PC" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;" parent="1" vertex="1">
+                    <mxGeometry x="1060" y="320" width="110" height="70" as="geometry"/>
+                </mxCell>
+                <mxCell id="e1" value="voice command" style="edgeStyle=elbowEdgeStyle;elbow=vertical;html=1;" parent="1" source="n_user" target="n_alexa" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e2" value="Alexa routine&#xa;(Voice Monkey skill)" style="edgeStyle=orthogonalEdgeStyle;html=1;" parent="1" source="n_alexa" target="n_vm" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e3" value="HTTPS POST (token in body)" style="edgeStyle=elbowEdgeStyle;elbow=vertical;html=1;" parent="1" source="n_vm" target="n_ts" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e4" value="Tailnet tunnel (WireGuard)" style="edgeStyle=orthogonalEdgeStyle;html=1;" parent="1" source="n_ts" target="n_wol" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+                <mxCell id="e5" value="UDP magic packet&#xa;(LAN broadcast)" style="edgeStyle=elbowEdgeStyle;elbow=vertical;html=1;" parent="1" source="n_wol" target="n_pc" edge="1">
+                    <mxGeometry relative="1" as="geometry"/>
+                </mxCell>
+            </root>
+        </mxGraphModel>
+    </diagram>
+</mxfile>

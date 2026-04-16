@@ -4,9 +4,7 @@ A self-hosted replacement for the discontinued Amazon Alexa Wake-on-LAN skill. S
 
 ## How it works
 
-```
-Alexa  →  Voice Monkey skill  →  POST https://<your-node>.ts.net/  →  WoL server  →  magic packet  →  your PC
-```
+![Architecture diagram](diagram.svg)
 
 1. You issue a voice command to Alexa to trigger a routine.
 2. The [Voice Monkey](https://voicemonkey.io/docs#introduction) Alexa skill triggers a user-defined HTTP request with a secret token in the JSON body.
