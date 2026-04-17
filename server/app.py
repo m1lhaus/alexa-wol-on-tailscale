@@ -4,10 +4,12 @@ import logging
 import os
 import re
 import socket
+import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 _log_level = logging.DEBUG if os.environ["WOL_DEBUG"] == "1" else logging.INFO
 logging.basicConfig(level=_log_level, format="%(asctime)s %(levelname)s %(message)s")
+logging.Formatter.converter = time.localtime
 log = logging.getLogger(__name__)
 
 # Secret token for authenticating incoming requests

@@ -43,6 +43,7 @@ services:
     container_name: wol
     network_mode: service:ts-wol
     environment:
+      - TZ=${TZ}
       - WOL_TOKEN=${WOL_TOKEN}
       - WOL_MAC=${WOL_MAC}
       - WOL_BROADCAST=${WOL_BROADCAST}
