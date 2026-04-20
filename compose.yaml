@@ -41,6 +41,8 @@ services:
   wol:
     build: ./server
     container_name: wol
+    depends_on:
+      - ts-wol
     network_mode: service:ts-wol
     environment:
       - TZ=${TZ}
