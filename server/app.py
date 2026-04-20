@@ -2,6 +2,7 @@ import hmac
 import itertools
 import json
 import logging
+import math
 import os
 import re
 import socket
@@ -23,17 +24,17 @@ MAC_ADDRESS: str = os.environ["WOL_MAC"]
 BROADCAST_IP: str = os.environ["WOL_BROADCAST"]
 
 # UDP port to send WoL magic packets to (default: 9)
-WOL_PORT: int = int(os.environ.get("WOL_PORT", "9"))
+WOL_PORT: int = int(os.environ.get("WOL_PORT") or "9")
 
 # Minimum token length — reject trivially weak secrets at startup
 _MIN_TOKEN_LEN: int = 16
 
 # Per-connection inactivity timeout in seconds — limits slowloris / slow-read attacks
-_CONNECTION_TIMEOUT: float = float(os.environ.get("WOL_CONN_TIMEOUT", "5"))
+_CONNECTION_TIMEOUT: float = float(os.environ.get("WOL_CONN_TIMEOUT") or "5")
 
 # Minimum interval between successful wake packets (seconds) — prevents token-leak abuse
 _WAKE_COOLDOWN: float = 30.0
-_last_wake_time: float = 0.0
+_last_wake_time: float = -_WAKE_COOLDOWN
 
 _MAC_RE = re.compile(
     r"^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$"   # colon- or hyphen-delimited
@@ -66,12 +67,15 @@ def send_magic_packet(mac: str, broadcast: str) -> None:
         s.sendto(magic, (broadcast, WOL_PORT))
 
 
-def get_local_ip() -> str:
-    """Get the local IP address of the machine."""
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as _s:
-        _s.connect(("8.8.8.8", 80))
-        local_ip = _s.getsockname()[0]
-    return local_ip
+def get_local_ip() -> str | None:
+    """Get the local IP address of the machine, or None if it cannot be determined."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as _s:
+            _s.connect(("8.8.8.8", 80))
+            local_ip = _s.getsockname()[0]
+        return local_ip
+    except OSError:
+        return None
 
 
 class WoLHandler(BaseHTTPRequestHandler):
@@ -97,7 +101,8 @@ class WoLHandler(BaseHTTPRequestHandler):
                 self._drop()
                 return
             content_type = self.headers.get("Content-Type", "")
-            if "application/json" not in content_type:
+            media_type = content_type.split(";", 1)[0].strip().lower()
+            if media_type != "application/json":
                 log.debug("Dropping request [#%d]: unsupported Content-Type: %s", self._req_id, content_type)
                 self._drop()
                 return
@@ -113,7 +118,7 @@ class WoLHandler(BaseHTTPRequestHandler):
                 global _last_wake_time
                 now = time.monotonic()
                 if now - _last_wake_time < _WAKE_COOLDOWN:
-                    retry = int(_WAKE_COOLDOWN - (now - _last_wake_time))
+                    retry = max(1, math.ceil(_WAKE_COOLDOWN - (now - _last_wake_time)))
                     log.info("Wake request [#%d] throttled (cooldown %.0fs)", self._req_id, _WAKE_COOLDOWN)
                     self.send_response(429, "Too Many Requests")
                     self.send_header("Retry-After", str(retry))
@@ -190,7 +195,7 @@ class WoLHandler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     _validate_config()
-    log.info(f"WoL server running on {get_local_ip()} starting listening on 0.0.0.0:8080 "
+    log.info(f"WoL server running on {get_local_ip() or 'N/A'} starting listening on 0.0.0.0:8080 "
              f"(WoL MAC={MAC_ADDRESS}, broadcast={BROADCAST_IP})")
     log.debug("Debug mode is enabled; all incoming requests will be logged")
     server = HTTPServer(("0.0.0.0", 8080), WoLHandler)

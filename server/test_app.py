@@ -75,6 +75,16 @@ class TestSendMagicPacket(unittest.TestCase):
         self.assertEqual(colon_payload, hyphen_payload)
 
 
+class TestLocalIpLookup(unittest.TestCase):
+    """Verify startup IP discovery is best-effort only."""
+
+    def test_get_local_ip_returns_none_when_lookup_fails(self):
+        with patch("socket.socket") as mock_socket_cls:
+            mock_sock = mock_socket_cls.return_value.__enter__.return_value
+            mock_sock.connect.side_effect = OSError("network unreachable")
+            self.assertIsNone(app.get_local_ip())
+
+
 # ---------------------------------------------------------------------------
 # Integration tests — HTTP server
 # ---------------------------------------------------------------------------
@@ -311,10 +321,11 @@ class TestWoLHTTPServer(unittest.TestCase):
 
     def test_missing_content_type_is_dropped(self):
         """POST without Content-Type header must be dropped."""
+        body = json.dumps({"token": _TOKEN}).encode()
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
         try:
-            conn.request("POST", "/wol", body=json.dumps({"token": _TOKEN}).encode(),
-                         headers={"Content-Length": "50"})
+            conn.request("POST", "/wol", body=body,
+                         headers={"Content-Length": str(len(body))})
             resp = conn.getresponse()
         except (ConnectionResetError, http.client.RemoteDisconnected, BrokenPipeError, OSError):
             resp = None
@@ -335,6 +346,29 @@ class TestWoLHTTPServer(unittest.TestCase):
         finally:
             conn.close()
         self.assertIsNone(resp)
+
+    def test_json_content_type_with_charset_is_accepted(self):
+        """A JSON media type with parameters must still be accepted."""
+        app._last_wake_time = 0.0
+        body = json.dumps({"token": _TOKEN}).encode()
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        try:
+            with patch.object(app, "send_magic_packet") as mock_send:
+                conn.request(
+                    "POST",
+                    "/wol",
+                    body=body,
+                    headers={
+                        "Content-Type": "application/json; charset=utf-8",
+                        "Content-Length": str(len(body)),
+                    },
+                )
+                resp = conn.getresponse()
+        finally:
+            conn.close()
+
+        self.assertEqual(resp.status, 200)
+        mock_send.assert_called_once_with(_MAC, _BROADCAST)
 
     # ------------------------------------------------------------------
     # Wake cooldown
@@ -358,6 +392,20 @@ class TestWoLHTTPServer(unittest.TestCase):
         retry_after = resp2.getheader("Retry-After")
         self.assertIsNotNone(retry_after)
         self.assertTrue(retry_after.isdigit())
+        mock_send.assert_not_called()
+
+    def test_retry_after_rounds_up_remaining_cooldown(self):
+        """Retry-After must round up so throttled clients do not retry too early."""
+        payload = json.dumps({"token": _TOKEN}).encode()
+        app._last_wake_time = 100.0 - (app._WAKE_COOLDOWN - 0.2)
+
+        with patch.object(app.time, "monotonic", return_value=100.0):
+            with patch.object(app, "send_magic_packet") as mock_send:
+                resp = self._post(payload)
+
+        self.assertIsNotNone(resp)
+        self.assertEqual(resp.status, 429)
+        self.assertEqual(resp.getheader("Retry-After"), "1")
         mock_send.assert_not_called()
 
     # ------------------------------------------------------------------
