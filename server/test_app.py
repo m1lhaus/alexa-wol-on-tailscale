@@ -400,6 +400,21 @@ class TestValidateConfig(unittest.TestCase):
             with self.assertRaises(ValueError):
                 app._validate_config()
 
+    def test_zero_port_raises(self):
+        with patch.object(app, "WOL_PORT", 0):
+            with self.assertRaises(ValueError):
+                app._validate_config()
+
+    def test_port_above_65535_raises(self):
+        with patch.object(app, "WOL_PORT", 70000):
+            with self.assertRaises(ValueError):
+                app._validate_config()
+
+    def test_negative_port_raises(self):
+        with patch.object(app, "WOL_PORT", -1):
+            with self.assertRaises(ValueError):
+                app._validate_config()
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
