@@ -31,6 +31,10 @@ _MIN_TOKEN_LEN: int = 16
 # Per-connection inactivity timeout in seconds — limits slowloris / slow-read attacks
 _CONNECTION_TIMEOUT: float = float(os.environ.get("WOL_CONN_TIMEOUT", "5"))
 
+# Minimum interval between successful wake packets (seconds) — prevents token-leak abuse
+_WAKE_COOLDOWN: float = 30.0
+_last_wake_time: float = 0.0
+
 _MAC_RE = re.compile(
     r"^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$"   # colon- or hyphen-delimited
     r"|^[0-9A-Fa-f]{12}$"                         # bare 12 hex digits
@@ -92,6 +96,11 @@ class WoLHandler(BaseHTTPRequestHandler):
                 log.debug("Dropping request [#%d]: Content-Length %d exceeds limit", self._req_id, length)
                 self._drop()
                 return
+            content_type = self.headers.get("Content-Type", "")
+            if "application/json" not in content_type:
+                log.debug("Dropping request [#%d]: unsupported Content-Type: %s", self._req_id, content_type)
+                self._drop()
+                return
             body = self.rfile.read(length)
             data = json.loads(body)  # exception handled below
             token_raw = data.get("token")
@@ -101,7 +110,27 @@ class WoLHandler(BaseHTTPRequestHandler):
                 return
             token = token_raw.encode()
             if hmac.compare_digest(token, TOKEN):
-                send_magic_packet(MAC_ADDRESS, BROADCAST_IP)
+                global _last_wake_time
+                now = time.monotonic()
+                if now - _last_wake_time < _WAKE_COOLDOWN:
+                    retry = int(_WAKE_COOLDOWN - (now - _last_wake_time))
+                    log.info("Wake request [#%d] throttled (cooldown %.0fs)", self._req_id, _WAKE_COOLDOWN)
+                    self.send_response(429, "Too Many Requests")
+                    self.send_header("Retry-After", str(retry))
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.close_connection = True
+                    return
+                _last_wake_time = now
+                try:
+                    send_magic_packet(MAC_ADDRESS, BROADCAST_IP)
+                except Exception as e:
+                    log.error("Failed to send magic packet [#%d]: %s", self._req_id, e)
+                    self.send_response(503, "Service Unavailable")
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.close_connection = True
+                    return
                 log.info("WoL magic packet sent to %s via %s", MAC_ADDRESS, BROADCAST_IP)
                 self.send_response(200)
                 self.send_header("Connection", "close")

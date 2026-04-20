@@ -1,7 +1,7 @@
 """Tests for the Wake-on-LAN HTTP server (server/app.py).
 
 Run with:
-    export $(grep -v '^#' .env | xargs) && python -m unittest test_app -v
+    export $(grep -v '^#' .env | xargs) && cd server && python -m unittest test_app -v
 """
 
 import http.client
@@ -16,7 +16,7 @@ from unittest.mock import patch
 # Force env vars before importing app so module-level constants initialise correctly.
 # Direct assignment (not setdefault) is required because the shell may already have
 # these set to empty strings via the VS Code launch configuration.
-_TOKEN = "test_token_abc123"
+_TOKEN = "test_token_long_enough_for_validation_check"
 _MAC = "AA:BB:CC:DD:EE:FF"
 _BROADCAST = "192.168.1.255"
 
@@ -134,6 +134,7 @@ class TestWoLHTTPServer(unittest.TestCase):
 
     def test_valid_token_returns_200(self):
         """Correct token → 200 OK and exactly one magic-packet call."""
+        app._last_wake_time = 0.0
         payload = json.dumps({"token": _TOKEN}).encode()
         with patch.object(app, "send_magic_packet") as mock_send:
             resp = self._post(payload)
@@ -143,11 +144,14 @@ class TestWoLHTTPServer(unittest.TestCase):
         mock_send.assert_called_once_with(_MAC, _BROADCAST)
 
     def test_send_magic_packet_failure_drops_connection(self):
-        """If send_magic_packet raises, the server must drop rather than return 200."""
+        """If send_magic_packet raises, the server must return 503."""
+        app._last_wake_time = 0.0
         payload = json.dumps({"token": _TOKEN}).encode()
         with patch.object(app, "send_magic_packet", side_effect=OSError("network error")):
             resp = self._post(payload)
-        self.assertIsNone(resp, "socket failure must not produce a 200 response")
+        self.assertIsNotNone(resp)
+        self.assertEqual(resp.status, 503)
+        self.assertEqual(resp.getheader("Connection"), "close")
 
     def test_connection_timeout_is_set(self):
         """setup() must apply _CONNECTION_TIMEOUT to the socket."""
@@ -228,14 +232,16 @@ class TestWoLHTTPServer(unittest.TestCase):
 
     def test_body_at_size_limit_is_accepted(self):
         """Content-Length == 4096 is within the allowed limit and must succeed."""
-        base = json.dumps({"token": _TOKEN, "pad": ""}).encode()
-        # Fill "pad" value so the total reaches exactly 4096 bytes
-        pad_len = 4096 - len(base) + len('""') - 2  # replace empty "" with pad_len chars
+        inner = json.dumps({"token": _TOKEN, "pad": ""}).encode()
+        # inner has an empty "pad" value (""); we need to grow it to exactly 4096 bytes.
+        # Replacing the empty string with N 'x' chars adds N bytes to the JSON output.
+        pad_len = 4096 - len(inner)
         if pad_len < 0:
             self.skipTest("Token too long to construct a 4096-byte payload")
         payload = json.dumps({"token": _TOKEN, "pad": "x" * pad_len}).encode()
-        self.assertLessEqual(len(payload), 4096, "payload construction error")
+        self.assertEqual(len(payload), 4096, "payload must be exactly 4096 bytes")
 
+        app._last_wake_time = 0.0
         with patch.object(app, "send_magic_packet") as mock_send:
             resp = self._post(payload)
 
@@ -291,12 +297,68 @@ class TestWoLHTTPServer(unittest.TestCase):
 
     def test_successful_response_sends_connection_close(self):
         """200 OK must include Connection: close to prevent connection reuse."""
+        app._last_wake_time = 0.0
         payload = json.dumps({"token": _TOKEN}).encode()
         with patch.object(app, "send_magic_packet"):
             resp = self._post(payload)
         self.assertIsNotNone(resp)
         self.assertEqual(resp.status, 200)
         self.assertEqual(resp.getheader("Connection"), "close")
+
+    # ------------------------------------------------------------------
+    # Content-Type validation
+    # ------------------------------------------------------------------
+
+    def test_missing_content_type_is_dropped(self):
+        """POST without Content-Type header must be dropped."""
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        try:
+            conn.request("POST", "/wol", body=json.dumps({"token": _TOKEN}).encode(),
+                         headers={"Content-Length": "50"})
+            resp = conn.getresponse()
+        except (ConnectionResetError, http.client.RemoteDisconnected, BrokenPipeError, OSError):
+            resp = None
+        finally:
+            conn.close()
+        self.assertIsNone(resp)
+
+    def test_wrong_content_type_is_dropped(self):
+        """POST with non-JSON Content-Type must be dropped."""
+        conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=3)
+        body = json.dumps({"token": _TOKEN}).encode()
+        try:
+            conn.request("POST", "/wol", body=body,
+                         headers={"Content-Type": "text/plain", "Content-Length": str(len(body))})
+            resp = conn.getresponse()
+        except (ConnectionResetError, http.client.RemoteDisconnected, BrokenPipeError, OSError):
+            resp = None
+        finally:
+            conn.close()
+        self.assertIsNone(resp)
+
+    # ------------------------------------------------------------------
+    # Wake cooldown
+    # ------------------------------------------------------------------
+
+    def test_rapid_wake_is_throttled(self):
+        """Second wake within cooldown period returns 429 and Retry-After."""
+        app._last_wake_time = 0.0
+        payload = json.dumps({"token": _TOKEN}).encode()
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp1 = self._post(payload)
+        self.assertIsNotNone(resp1)
+        self.assertEqual(resp1.status, 200)
+        mock_send.assert_called_once()
+
+        # Second request within cooldown — should get 429 and Retry-After
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp2 = self._post(payload)
+        self.assertIsNotNone(resp2)
+        self.assertEqual(resp2.status, 429)
+        retry_after = resp2.getheader("Retry-After")
+        self.assertIsNotNone(retry_after)
+        self.assertTrue(retry_after.isdigit())
+        mock_send.assert_not_called()
 
     # ------------------------------------------------------------------
     # Raw-socket edge cases (cover handle_one_request branches)

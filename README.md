@@ -137,6 +137,14 @@ Before proceeding to Voice Monkey, use a [simple tool that can send a POST reque
 - your Tailscale Funnel is set up correctly (check ACLs)
 - the web request from the internet actually reaches the server (consider using `WOL_DEBUG=1`)  
 
+Expected response behavior for a valid authenticated request:
+
+- `200 OK` — the magic packet was sent successfully.
+- `429 Too Many Requests` — the request was valid but was rate-limited by the wake cooldown; the response includes `Retry-After`.
+- `503 Service Unavailable` — the request was valid but sending the magic packet failed on the server side.
+
+Invalid or unauthorized requests are still silently dropped with no HTTP response.
+
 ### 5. Configure Voice Monkey
 
 1. Create a new monkey in the Voice Monkey dashboard. Follow [Voice Monkey instructions](https://voicemonkey.io/docs#getting-started).
