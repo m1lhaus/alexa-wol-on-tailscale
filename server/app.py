@@ -1,3 +1,4 @@
+import hmac
 import itertools
 import json
 import logging
@@ -7,7 +8,7 @@ import socket
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
-_log_level = logging.DEBUG if os.environ["WOL_DEBUG"] == "1" else logging.INFO
+_log_level = logging.DEBUG if os.environ.get("WOL_DEBUG", "0") == "1" else logging.INFO
 logging.basicConfig(level=_log_level, format="%(asctime)s %(levelname)s %(message)s")
 logging.Formatter.converter = time.localtime
 log = logging.getLogger(__name__)
@@ -22,13 +23,13 @@ MAC_ADDRESS: str = os.environ["WOL_MAC"]
 BROADCAST_IP: str = os.environ["WOL_BROADCAST"]
 
 # UDP port to send WoL magic packets to (default: 9)
-WOL_PORT: int = int(os.environ["WOL_PORT"])
+WOL_PORT: int = int(os.environ.get("WOL_PORT", "9"))
 
 # Minimum token length — reject trivially weak secrets at startup
 _MIN_TOKEN_LEN: int = 16
 
 # Per-connection inactivity timeout in seconds — limits slowloris / slow-read attacks
-_CONNECTION_TIMEOUT: float = float(os.environ["WOL_CONN_TIMEOUT"])
+_CONNECTION_TIMEOUT: float = float(os.environ.get("WOL_CONN_TIMEOUT", "5"))
 
 _MAC_RE = re.compile(
     r"^([0-9A-Fa-f]{2}[:\-]){5}[0-9A-Fa-f]{2}$"   # colon- or hyphen-delimited
@@ -46,6 +47,8 @@ def _validate_config() -> None:
         socket.inet_aton(BROADCAST_IP)
     except OSError:
         raise ValueError(f"WOL_BROADCAST is not a valid IPv4 address: {BROADCAST_IP!r}")
+    if not (0 < WOL_PORT <= 65535):
+        raise ValueError(f"WOL_PORT must be between 1 and 65535 (got {WOL_PORT})")
     if _CONNECTION_TIMEOUT <= 0:
         raise ValueError(f"WOL_CONN_TIMEOUT must be positive (got {_CONNECTION_TIMEOUT})")
 
@@ -97,7 +100,7 @@ class WoLHandler(BaseHTTPRequestHandler):
                 self._drop()
                 return
             token = token_raw.encode()
-            if token == TOKEN:
+            if hmac.compare_digest(token, TOKEN):
                 send_magic_packet(MAC_ADDRESS, BROADCAST_IP)
                 log.info("WoL magic packet sent to %s via %s", MAC_ADDRESS, BROADCAST_IP)
                 self.send_response(200)
