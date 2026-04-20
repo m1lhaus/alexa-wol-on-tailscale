@@ -23,6 +23,9 @@ A self-hosted replacement for the discontinued Amazon Alexa Wake-on-LAN skill. S
 ```
 compose.yaml          # Docker Compose — Tailscale + WoL server
 .env_template         # Copy to .env and fill in your values
+diagram.drawio        # Architecture diagram (draw.io source)
+diagram.svg           # Architecture diagram (rendered SVG)
+LICENSE               # GPL-3.0 license
 server/
   app.py              # Python HTTP server (stdlib only)
   Dockerfile          # Production image
@@ -162,6 +165,12 @@ Open the project in VS Code and choose **Reopen in Container**. The dev containe
 
 ```bash
 cd server && python -m unittest test_app -v
+```
+
+Note: tests require the `WOL_TOKEN`, `WOL_MAC`, and `WOL_BROADCAST` environment variables to be set (any valid values will do — the test suite overrides them internally). If running from the terminal without the VS Code launch config:
+
+```bash
+export WOL_TOKEN=test_token_1234567890 WOL_MAC=AA:BB:CC:DD:EE:FF WOL_BROADCAST=192.168.1.255 && cd server && python -m unittest test_app -v
 ```
 
 Or use the **Run tests (test_app.py)** launch configuration in VS Code. Tests spin up a real in-process HTTP server and cover valid/invalid tokens, all silent-drop scenarios, magic-packet construction, and timeout handling.
