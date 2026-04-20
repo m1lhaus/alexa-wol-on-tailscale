@@ -42,6 +42,7 @@ The server is intentionally hostile to unauthorized traffic:
 - Only `POST` requests are processed; all other methods silently drop the connection (no response).
 - Requests with a wrong or missing token, invalid JSON, or oversized body are silently dropped — no error response is sent to the caller.
 - A per-connection inactivity timeout (`WOL_CONN_TIMEOUT`) limits slow-read / Slowloris attacks.
+- A wake cooldown throttles repeated valid requests, even if the underlying packet send later fails; this is intentional to avoid abuse when a valid token is known.
 - `WOL_TOKEN` must be at least 16 characters; the server refuses to start with a weak secret.
 - The container runs as a non-root user.
 
@@ -75,6 +76,14 @@ Edit `.env` and fill in all values. Key settings:
 | `LAN_GATEWAY` | Your LAN default gateway, e.g. `192.168.0.1` |
 | `CONTAINER_IP` | Static IP for the container — must be unused and outside DHCP range |
 
+Optional settings (defaults are shown in the template):
+
+| Variable | Default | Description |
+|---|---|---|
+| `WOL_PORT` | `9` | UDP port for outbound magic packets |
+| `WOL_CONN_TIMEOUT` | `5` | Per-connection inactivity timeout in seconds |
+| `WOL_DEBUG` | `0` | Set to `1` to log every request including dropped ones |
+
 Finding network values:
 ```bash
 ip -br addr show          # interface name and IP/subnet
@@ -93,7 +102,7 @@ Note that WoL packets must be sent from the same broadcast domain (L2 subnet) as
 docker compose up -d
 ```
 
-The Tailscale container will authenticate and bring up Funnel automatically. Your server will be reachable at `https://<TS_HOSTNAME>.<tailnet>.ts.net/`. Check with `docker compose logs -f ts-wol` for Tailscale logs and `docker compose logs -f wol` for server logs.
+The Tailscale container will authenticate and bring up Funnel automatically. Your server will be reachable at `https://<TS_HOSTNAME>.<tailnet>.ts.net/`. Check the initial logs with `docker compose logs ts-wol` and `docker compose logs wol`.
 
 #### Networking note: macvlan and promiscuous mode
 
@@ -140,7 +149,7 @@ Before proceeding to Voice Monkey, use a [simple tool that can send a POST reque
 Expected response behavior for a valid authenticated request:
 
 - `200 OK` — the magic packet was sent successfully.
-- `429 Too Many Requests` — the request was valid but was rate-limited by the wake cooldown; the response includes `Retry-After`.
+- `429 Too Many Requests` — the request was valid but was rate-limited by the wake cooldown; the response includes `Retry-After`, rounded up to full seconds.
 - `503 Service Unavailable` — the request was valid but sending the magic packet failed on the server side.
 
 Invalid or unauthorized requests are still silently dropped with no HTTP response.
