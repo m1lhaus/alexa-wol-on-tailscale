@@ -115,6 +115,23 @@ class WoLHandler(BaseHTTPRequestHandler):
                 return
             token = token_raw.encode()
             if hmac.compare_digest(token, TOKEN):
+                action_raw = data.get("action", "wol")
+                if not isinstance(action_raw, str):
+                    log.debug("Dropping request [#%d]: action field not a string", self._req_id)
+                    self._drop()
+                    return
+                action = action_raw.strip().lower()
+                if action == "health":
+                    log.debug("Healthcheck request [#%d] OK", self._req_id)
+                    self.send_response(200)
+                    self.send_header("Connection", "close")
+                    self.end_headers()
+                    self.close_connection = True
+                    return
+                if action != "wol":
+                    log.debug("Dropping request [#%d]: unknown action %r", self._req_id, action_raw)
+                    self._drop()
+                    return
                 global _last_wake_time
                 now = time.monotonic()
                 if now - _last_wake_time < _WAKE_COOLDOWN:

@@ -1,3 +1,4 @@
 Dockerfile
-test_*.py
+test_app.py
+test_wol.py
 __pycache__/

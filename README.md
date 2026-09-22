@@ -31,6 +31,7 @@ server/
   Dockerfile          # Production image
   test_app.py         # Unit + integration tests
   test_wol.py         # Manual magic-packet smoke test
+  test_health.py      # Docker healthcheck script (also runnable standalone)
 .devcontainer/        # VS Code dev container for local development
 .vscode/launch.json   # Debug / test launch configurations
 ```
@@ -40,13 +41,32 @@ server/
 The server is intentionally hostile to unauthorized traffic:
 
 - Only `POST` requests are processed; all other methods silently drop the connection (no response).
-- Requests with a wrong or missing token, invalid JSON, or oversized body are silently dropped — no error response is sent to the caller.
+- Requests with a wrong or missing token, invalid JSON, an unrecognized `action`, or oversized body are silently dropped — no error response is sent to the caller.
 - A per-connection inactivity timeout (`WOL_CONN_TIMEOUT`) limits slow-read / Slowloris attacks.
 - A wake cooldown throttles repeated valid requests, even if the underlying packet send later fails; this is intentional to avoid abuse when a valid token is known.
 - `WOL_TOKEN` must be at least 16 characters; the server refuses to start with a weak secret.
 - The container runs as a non-root user.
 
 A user can optionally place the server on an isolated VLAN and relay only WoL broadcasts between VLANs to further isolate the publicly exposed device. This setup is non-trivial and may not work with every router (tested with MikroTik).
+
+## API
+
+The server exposes a single endpoint (`POST /`, any path) that accepts a JSON body:
+
+```json
+{"token": "<some_token>", "action": "wol"}
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `token` | yes | Must exactly match `WOL_TOKEN`. |
+| `action` | no | Either `"wol"` (send a magic packet) or `"health"` (healthcheck, no packet sent). Defaults to `"wol"` when omitted, so existing integrations keep working unchanged. Matching is case-insensitive and ignores surrounding whitespace. |
+
+Behavior once the token is valid:
+
+- `action` omitted or `"wol"` — sends a WoL magic packet (subject to the wake cooldown described below).
+- `action` is `"health"` — returns `200 OK` immediately; does not send a magic packet and is never throttled by the wake cooldown. Useful for external uptime/health monitoring.
+- any other `action` value — request is silently dropped, same as an invalid token.
 
 ## Setup
 
@@ -99,7 +119,7 @@ Note that WoL packets must be sent from the same broadcast domain (L2 subnet) as
 ### 4. Start the stack
 
 ```bash
-docker compose up -d
+docker compose up -d --build
 ```
 
 The Tailscale container will authenticate and bring up Funnel automatically. Your server will be reachable at `https://<TS_HOSTNAME>.<tailnet>.ts.net/`. Check the initial logs with `docker compose logs ts-wol` and `docker compose logs wol`.
@@ -148,17 +168,17 @@ Before proceeding to Voice Monkey, use a [simple tool that can send a POST reque
 
 Expected response behavior for a valid authenticated request:
 
-- `200 OK` — the magic packet was sent successfully.
-- `429 Too Many Requests` — the request was valid but was rate-limited by the wake cooldown; the response includes `Retry-After`, rounded up to full seconds.
-- `503 Service Unavailable` — the request was valid but sending the magic packet failed on the server side.
+- `200 OK` — the magic packet was sent successfully (`action` omitted or `"wol"`), or the healthcheck succeeded (`action: "health"`).
+- `429 Too Many Requests` — a wake request was valid but was rate-limited by the wake cooldown; the response includes `Retry-After`, rounded up to full seconds. Healthchecks are never throttled.
+- `503 Service Unavailable` — a wake request was valid but sending the magic packet failed on the server side.
 
-Invalid or unauthorized requests are still silently dropped with no HTTP response.
+Invalid or unauthorized requests, including an unrecognized `action` value, are still silently dropped with no HTTP response.
 
 ### 5. Configure Voice Monkey
 
 1. Create a new monkey in the Voice Monkey dashboard. Follow [Voice Monkey instructions](https://voicemonkey.io/docs#getting-started).
 2. Add a new Flow with a `Web Request` Action.
-3. Select POST, fill your Tailscale domain `https://<TS_HOSTNAME>.<tailnet>.ts.net/`, paste your JSON body `{"token":"<some_token>"}`.
+3. Select POST, fill your Tailscale domain `https://<TS_HOSTNAME>.<tailnet>.ts.net/`, paste your JSON body `{"token":"<some_token>"}` (or use `{"token":"<some_token>","action":"health"}` instead to configure a separate healthcheck flow).
 4. Trigger the Flow manually and check the Docker logs.
 
 ## Development

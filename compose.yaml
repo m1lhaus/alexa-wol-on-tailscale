@@ -19,6 +19,8 @@ services:
       - TS_STATE_DIR=/var/lib/tailscale
       - TS_USERSPACE=false
       - TS_SERVE_CONFIG=/config/serve.json
+      - TS_ENABLE_HEALTH_CHECK=true
+      - TS_LOCAL_ADDR_PORT=127.0.0.1:41234
     configs:
       - source: ts-wol-serve
         target: /config/serve.json
@@ -28,6 +30,12 @@ services:
       - /dev/net/tun:/dev/net/tun
     cap_add:
       - net_admin
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://127.0.0.1:41234/healthz"]
+      interval: 1m
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     networks:
       lan:
         ipv4_address: ${CONTAINER_IP}
@@ -42,7 +50,8 @@ services:
     build: ./server
     container_name: wol
     depends_on:
-      - ts-wol
+      ts-wol:
+        condition: service_healthy
     network_mode: service:ts-wol
     environment:
       - TZ=${TZ}
@@ -52,6 +61,14 @@ services:
       - WOL_PORT=${WOL_PORT}
       - WOL_DEBUG=${WOL_DEBUG}
       - WOL_CONN_TIMEOUT=${WOL_CONN_TIMEOUT}
+    healthcheck:
+      # checks the wol app itself and the ts-wol sidecar it shares the network with
+      test: ["CMD", "python3", "/app/test_health.py"]
+      interval: 30s
+      # test_health.py uses 2 x 5s timeouts worst-case; keep a margin above that
+      timeout: 15s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
     logging:
       driver: json-file

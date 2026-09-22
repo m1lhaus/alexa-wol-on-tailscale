@@ -9,6 +9,7 @@ import json
 import os
 import socket
 import threading
+import time
 import unittest
 from http.server import HTTPServer
 from unittest.mock import patch
@@ -369,6 +370,92 @@ class TestWoLHTTPServer(unittest.TestCase):
 
         self.assertEqual(resp.status, 200)
         mock_send.assert_called_once_with(_MAC, _BROADCAST)
+
+    # ------------------------------------------------------------------
+    # action field — healthcheck / explicit wol / invalid values
+    # ------------------------------------------------------------------
+
+    def test_missing_action_defaults_to_wol(self):
+        """No 'action' field must behave exactly like the pre-existing WoL-only API."""
+        app._last_wake_time = 0.0
+        payload = json.dumps({"token": _TOKEN}).encode()
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(payload)
+
+        self.assertIsNotNone(resp)
+        self.assertEqual(resp.status, 200)
+        mock_send.assert_called_once_with(_MAC, _BROADCAST)
+
+    def test_action_wol_triggers_wake(self):
+        """Explicit action == 'wol' must behave the same as the default."""
+        app._last_wake_time = 0.0
+        payload = json.dumps({"token": _TOKEN, "action": "wol"}).encode()
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(payload)
+
+        self.assertIsNotNone(resp)
+        self.assertEqual(resp.status, 200)
+        mock_send.assert_called_once_with(_MAC, _BROADCAST)
+
+    def test_action_health_returns_200_without_waking(self):
+        """action == 'health' must return 200 without sending a magic packet."""
+        payload = json.dumps({"token": _TOKEN, "action": "health"}).encode()
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(payload)
+
+        self.assertIsNotNone(resp)
+        self.assertEqual(resp.status, 200)
+        self.assertEqual(resp.getheader("Connection"), "close")
+        mock_send.assert_not_called()
+
+    def test_action_health_is_not_throttled_by_wake_cooldown(self):
+        """Healthchecks must succeed repeatedly even during an active wake cooldown."""
+        app._last_wake_time = time.monotonic()
+        payload = json.dumps({"token": _TOKEN, "action": "health"}).encode()
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp1 = self._post(payload)
+            resp2 = self._post(payload)
+
+        self.assertEqual(resp1.status, 200)
+        self.assertEqual(resp2.status, 200)
+        mock_send.assert_not_called()
+
+    def test_action_health_case_insensitive(self):
+        """Action matching must be case-insensitive and tolerate surrounding whitespace."""
+        payload = json.dumps({"token": _TOKEN, "action": " HEALTH "}).encode()
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(payload)
+
+        self.assertIsNotNone(resp)
+        self.assertEqual(resp.status, 200)
+        mock_send.assert_not_called()
+
+    def test_unknown_action_is_dropped(self):
+        """An unrecognized action value must be rejected without waking the target."""
+        payload = json.dumps({"token": _TOKEN, "action": "reboot"}).encode()
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(payload)
+
+        self.assertIsNone(resp)
+        mock_send.assert_not_called()
+
+    def test_non_string_action_is_dropped(self):
+        """A non-string action value (e.g. a number) must be rejected."""
+        payload = json.dumps({"token": _TOKEN, "action": 123}).encode()
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(payload)
+
+        self.assertIsNone(resp)
+        mock_send.assert_not_called()
+
+    def test_empty_action_is_dropped(self):
+        """An empty-string action does not match 'wol' or 'health' and must be rejected."""
+        payload = json.dumps({"token": _TOKEN, "action": ""}).encode()
+        with patch.object(app, "send_magic_packet") as mock_send:
+            resp = self._post(payload)
+
+        self.assertIsNone(resp)
+        mock_send.assert_not_called()
 
     # ------------------------------------------------------------------
     # Wake cooldown
