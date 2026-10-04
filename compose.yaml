@@ -76,6 +76,30 @@ services:
         max-size: "5m"
         max-file: "3"
 
+  watcher:
+    image: ghcr.io/m1lhaus/container-watcher:latest
+    container_name: wol-watcher
+    restart: on-failure
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/watcher.heartbeat && grep -q '^healthy$' /tmp/watcher.heartbeat && test $(find /tmp/watcher.heartbeat -mmin -2 2>/dev/null | wc -l) -eq 1"]
+      interval: 1m
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    working_dir: /workspace
+    environment:
+      - TZ=${TZ}
+      - COMPOSE_PROJECT_NAME=alexa-wol-on-tailscale
+      - WATCH_SERVICES=ts-wol,wol
+      - WATCH_INTERVAL=60     # how often to check the watched containers
+      - RECOVERY_TIMEOUT=30   # delay before retrying a recovery after a failed condition
+      - HOST_PWD=${PWD}
+      - HOST_HOSTNAME=${HOSTNAME}
+      - DEBUG=${WATCHER_DEBUG:-false}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${PWD}:/workspace
+
 networks:
   lan:
     driver: macvlan
