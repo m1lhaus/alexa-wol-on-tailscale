@@ -79,7 +79,7 @@ services:
   watcher:
     image: ghcr.io/m1lhaus/container-watcher:latest
     container_name: wol-watcher
-    restart: on-failure
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "test -f /tmp/watcher.heartbeat && grep -q '^healthy$' /tmp/watcher.heartbeat && test $(find /tmp/watcher.heartbeat -mmin -2 2>/dev/null | wc -l) -eq 1"]
       interval: 1m
